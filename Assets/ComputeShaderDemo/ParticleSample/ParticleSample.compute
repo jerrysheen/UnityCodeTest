@@ -1,0 +1,26 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel ParticleSample
+
+struct ParticleData {
+    float3 pos;
+    float4 color;
+};
+
+RWStructuredBuffer<ParticleData> ParticleDataBuffer;
+float Time;
+
+// index 每个粒子自己的编号
+// SV_GroupID dispatch过来的编号，每个线程组统一
+[numthreads(10,10,10)]
+void ParticleSample (uint3 gid : SV_GroupID, uint index : SV_GroupIndex)
+{
+    // TODO: insert actual code here!
+    int pindex = gid.x * 1000 + index;
+    
+    float x = sin(index);
+    float y = sin(index * 1.2f);
+    float3 forward = float3(x, y, -sqrt(1 - x * x - y * y));
+    ParticleDataBuffer[pindex].color = float4(forward.x, forward.y, cos(index) * 0.5f + 0.5, 1);
+    if (Time > gid.x)
+        ParticleDataBuffer[pindex].pos += forward * 0.005f;
+}
