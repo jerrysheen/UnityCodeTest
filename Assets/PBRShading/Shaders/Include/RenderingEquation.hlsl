@@ -1,6 +1,7 @@
 
 #define F0 float3(0.04, 0.04, 0.04)
 
+// normal distribution到底生成的是什么？
 float BRDFNormalDistribution(float3 normal, float3 halfVector, float roughness)
 {
     roughness = clamp(roughness, 0.04, 1.0);
