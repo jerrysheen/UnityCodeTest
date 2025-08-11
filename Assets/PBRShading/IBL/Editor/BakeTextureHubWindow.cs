@@ -4,6 +4,7 @@ using UnityEngine;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using UnityEngine.Rendering;
 
 public class BakeTextureHubWindow : EditorWindow
 {
@@ -423,8 +424,14 @@ public class BakeTextureHubWindow : EditorWindow
         private Texture2D RunCompute()
         {
             int kernel = cs.FindKernel(kernelName);
-            var rt = NewRWRT(outWidth, outHeight, RenderTextureFormat.ARGBHalf);
-
+            //var rt = NewRWRT(outWidth, outHeight, RenderTextureFormat.ARGBHalf);
+            var rt = new RenderTexture(outWidth, outHeight, 0, RenderTextureFormat.ARGB32)
+            {
+                dimension = TextureDimension.Cube,
+                enableRandomWrite = true,
+                volumeDepth = 6,
+                useMipMap = false
+            };
             if (envLatLong != null) cs.SetTexture(kernel, "_EnvLatLong", envLatLong);
             if (envCube != null) cs.SetTexture(kernel, "_EnvCube", envCube);
             cs.SetTexture(kernel, "_Output", rt);
@@ -442,7 +449,7 @@ public class BakeTextureHubWindow : EditorWindow
 
             string name = $"Irradiance_LatLong_{outWidth}x{outHeight}";
             SaveTexture(outTex, Path.Combine(saveFolder, name));
-            return outTex;
+            return null;
         }
 
         // -------- CPU L2 SH 实现（等距长方输入）--------
