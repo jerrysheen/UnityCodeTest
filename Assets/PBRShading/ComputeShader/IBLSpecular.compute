@@ -1,0 +1,73 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel IBLSpecular
+
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
+#include "Assets/PBRShading/Shaders/Include/IBLEquation.hlsl"
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Color.hlsl"
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWTexture2D<float4> _OutPut;
+TextureCube<float3> _EnvCube;
+SamplerState sampler_EnvCube;
+int2 _TextureSize;
+int face;
+float roughness;
+// 输出面 (face, uv∈[-1,1]) -> 世界方向 N（Cubemap 标准）
+float3 FaceUvToDir(uint face, float2 uv)
+{
+    float x = uv.x;
+    float y = uv.y;
+    // 注意：不同引擎/平台对面朝向略有差异，保持一致即可
+    // 这个地方为什么这么做是对的，就是构造出了一个方向向量，刚好终点在每个面上，再做normalized
+    if (face == 0)   return normalize(float3( 1,   -y,  -x)); // +X
+    else if (face==1)return normalize(float3(-1,   -y,   x)); // -X
+    else if (face==2)return normalize(float3( x,    1,   y)); // +Y
+    else if (face==3)return normalize(float3( x,   -1,  -y)); // -Y
+    else if (face==4)return normalize(float3( x,   -y,   1)); // +Z
+    else             return normalize(float3(-x,   -y,  -1)); // -Z
+}
+
+// unreal 版本：
+[numthreads(8,8,1)]
+void IBLSpecular (uint3 SV_GroupID        : SV_GroupID,
+            uint3 SV_GroupThreadID  : SV_GroupThreadID,
+            uint  SV_GroupIndex     : SV_GroupIndex,
+            uint3 SV_DispatchThreadID : SV_DispatchThreadID)
+{
+    // UVx就是x方向 0 ~ 1
+    // UVy就是y方向 0 ~ 1
+    
+    int UVx = SV_DispatchThreadID.x;
+    int UVy = SV_DispatchThreadID.y;
+    // 将uv -> -1 ~ 1
+    float2 uv = float2(UVx/(float)_TextureSize.x, UVy/(float)_TextureSize.y) * 2 - 1.0;
+    // 1. 首先生成法线方向:
+    float3 N = FaceUvToDir(face, uv);
+    float3 irradiance = 0;
+    // tangent space calculation from origin point
+    // 从法线方向构建坐标，在世界空间中，因为生成的法线在世界空间中
+    float3 up    = float3(0.0, 1.0, 0.0);
+    float3 right = normalize(cross(up, N));
+    up         = normalize(cross(N, right));
+
+
+    float nrSamples = 0.0;
+    float3 V = N;
+    const uint SAMPLE_COUNT = 1024;
+    for(uint i = 0; i < SAMPLE_COUNT; ++i)
+    {
+        float2 Xi = Hammersley(i, SAMPLE_COUNT);
+        float3 H  = ImportanceSampleGGX(Xi, N, roughness);
+        float3 L  = normalize(2.0 * dot(V, H) * H - V);
+        float NdotL = max(dot(N, L), 0.0);
+        if(NdotL > 0.0)
+        {
+            irradiance += SAMPLE_TEXTURECUBE_LOD(_EnvCube, sampler_EnvCube, L, 0).rgb * NdotL;
+            nrSamples      += NdotL;
+        }
+    }
+    irradiance = irradiance * (1.0 /  (nrSamples));
+    _OutPut[uint2(UVx, UVy)] = float4(irradiance, 1.0);
+}
+
+// todo： 这个版本没有做pdf优化， 可以刚好用宏控制做一个。
