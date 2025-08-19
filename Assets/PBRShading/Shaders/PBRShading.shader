@@ -7,6 +7,13 @@ Shader "PBRShading"
         _MetallicMap ("MetallicMap", 2D) = "white" {}
         _EmissionMap ("EmissionMap", 2D) = "white" {}
         _AoMap ("AoMap", 2D) = "white" {}
+        
+        // todo： 参考unity采样天空盒方式，重新生成我的图
+        // todo：cube压缩格式。
+        [Header(IBL)]
+        _DiffuseIBLMap ("DiffuseIBL", Cube) = "white" {}
+        _SpecularIBLMap ("SpecularIBL", Cube) = "white" {}
+        _BRDFLUTMap ("BRDFLUT", 2D) = "white" {}
     }
   SubShader
     {
@@ -46,6 +53,7 @@ Shader "PBRShading"
             #pragma fragment LitPassFragment
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityInput.hlsl"
             #include "Include/RenderingEquation.hlsl"
             struct Attributes
             {
@@ -70,7 +78,15 @@ Shader "PBRShading"
             TEXTURE2D(_MetallicMap);        SAMPLER(sampler_MetallicMap);
             TEXTURE2D(_EmissionMap);        SAMPLER(sampler_EmissionMap);
             TEXTURE2D(_AoMap);        SAMPLER(sampler_AoMap);
-            
+            TEXTURE2D(_BRDFLUTMap);        SAMPLER(sampler_BRDFLUTMap);
+            TEXTURECUBE(_DiffuseIBLMap); SAMPLER(sampler_DiffuseIBLMap);
+            TEXTURECUBE(_SpecularIBLMap); SAMPLER(sampler_SpecularIBLMap);
+        //     _DiffuseIBLMap ("DiffuseIBL", Cube) = "white" {}
+        // _SpecularIBLMap ("SpecularIBL", Cube) = "white" {}
+        // _BRDFLUTMap ("BRDFLUT", 2D) = "white" {}
+            CBUFFER_START(UnityPerMaterial)
+            float4 _SpecularIBLMap_HDR;
+            CBUFFER_END
             Varyings LitPassVertex(Attributes Input)
             {
                 Varyings o;
@@ -85,6 +101,16 @@ Shader "PBRShading"
                 return o;
             }
 
+
+            real3 DecodeHDREnvironment(real4 encodedIrradiance, real4 decodeInstructions)
+            {
+                // Take into account texture alpha if decodeInstructions.w is true(the alpha value affects the RGB channels)
+                real alpha = max(decodeInstructions.w * (encodedIrradiance.a - 1.0) + 1.0, 0.0);
+
+                // If Linear mode is not supported we can skip exponent part
+                return (decodeInstructions.x * PositivePow(alpha, decodeInstructions.y)) * encodedIrradiance.rgb;
+            }
+            
             void LitPassFragment(Varyings Input, out half4 outColor : SV_Target0)
             {
                 half4 diffuseMap = SAMPLE_TEXTURE2D(_DiffuseMap, sampler_DiffuseMap, Input.uv);
@@ -99,7 +125,7 @@ Shader "PBRShading"
                 float3 bitangent = crossSign * cross(Input.normalWS.xyz, Input.tangentWS.xyz);
                 // 这边是rowmajor 还是Clomn major？
                 half3x3 tangentToWorld = half3x3(Input.tangentWS.xyz, bitangent.xyz, Input.normalWS.xyz);
-                half3 normalWS = TransformTangentToWorld(normalTS , tangentToWorld, true);
+                half3 normalWS = normalize(TransformTangentToWorld(normalTS , tangentToWorld, true));
 
                 float3 viewDir = normalize(GetWorldSpaceViewDir(Input.positionWS));
                 float3 LightDIR = half3(_MainLightPosition.xyz);
@@ -126,7 +152,25 @@ Shader "PBRShading"
                 float3 diffuse = Kd * surfaceColor.xyz / PI;
                 float3 specular = (D * F * G) / (4 * NdotV * NdotL + 0.00001f);
                 float3 directLight = (diffuse + specular) * NdotL * radiance;
-                outColor = half4(directLight ,1.0f);
+
+                // IBL part:
+                // diffuse IBL:
+                float3 ambiant = 0;
+                float3 R = normalize(2 * (NdotV) * normalWS - viewDir);
+                float3 diffuseIBLMap = SAMPLE_TEXTURECUBE_LOD(_DiffuseIBLMap, sampler_DiffuseIBLMap, R, 0);
+
+                //float3 diffuseIBL = Kd * diffuseMap * diffuseIBLMap / PI;
+                //此处不/PI，因为PI已经在黎曼和公式里面被干掉了。
+                float3 diffuseIBL = Kd * diffuseMap * diffuseIBLMap;
+                outColor = half4(diffuseIBLMap.xyz, 1.0f);
+                const float MAX_REFLECTION_LOD = 4.0;
+                float3 prefilteredColor = SAMPLE_TEXTURECUBE_LOD(_SpecularIBLMap, sampler_SpecularIBLMap, R,  roughness * MAX_REFLECTION_LOD).rgb;    
+
+                //prefilteredColor = DecodeHDREnvironment(half4(prefilteredColor,1.0f),half4(1,1,0,0));
+                float2 brdf  = SAMPLE_TEXTURE2D(_BRDFLUTMap, sampler_BRDFLUTMap, float2(max(NdotV, 0.0), roughness)).rg;
+                float3 specularIBL = prefilteredColor * (F * brdf.x + brdf.y);
+                ambiant = diffuseIBL + specularIBL;
+                outColor.xyz = ambiant + directLight;
                 return;
             }
 

@@ -24,6 +24,26 @@ float3 FaceUvToDir(uint face, float2 uv)
     else             return normalize(float3(-x,   -y,  -1)); // -Z
 }
 
+static const float kRGBMRange = 8.0;
+
+half4 EncodeRGBM(half3 color)
+{
+    color *= 1.0 / kRGBMRange;
+    half m = max(max(color.x, color.y), max(color.z, 1e-5));
+    m = ceil(m * 255) / 255;
+    return half4(color / m, m);
+}
+
+half3 DecodeRGBM(half4 rgbm)
+{
+    return rgbm.xyz * rgbm.w * kRGBMRange;
+}
+
+real3 FastTonemap(real3 c)
+{
+    return c * rcp(Max3(c.r, c.g, c.b) + 1.0);
+}
+
 [numthreads(8,8,1)]
 void IBLDiffuse (uint3 SV_GroupID        : SV_GroupID,
             uint3 SV_GroupThreadID  : SV_GroupThreadID,
@@ -60,14 +80,17 @@ void IBLDiffuse (uint3 SV_GroupID        : SV_GroupID,
             // 构建向量然后从tangent space转到直接坐标，比如这个向量原先是normal为z轴的，
             // 把Normal拆成xyz三个方向了，相当于把向量从切线空间 -> 世界空间，
             float3 sampleVec = tangentSample.x * right + tangentSample.y * up + tangentSample.z * N; 
-
-            irradiance +=  SAMPLE_TEXTURECUBE_LOD(_EnvCube, sampler_EnvCube, sampleVec, 3).rgb * cos(theta) * sin(theta);
+            half3 tempIrradiance = SAMPLE_TEXTURECUBE_LOD(_EnvCube, sampler_EnvCube, sampleVec, 3);
+            //tempIrradiance = FastTonemap(half4(tempIrradiance,1.0));
+            
+            irradiance +=  tempIrradiance * cos(theta) * sin(theta);
             nrSamples++;
         }
     }
-
+    
+    // todo: 求黎曼和的时候会产生一个PI， 看看是怎么回事
     irradiance = PI * irradiance * (1.0 /  (nrSamples));
-    _OutArray[uint3(UVx, UVy,face)] = float4(irradiance, 1.0);
+    _OutArray[uint3(UVx, UVy,face)] = float4(irradiance.xyz, 1.0);
 
     
 }

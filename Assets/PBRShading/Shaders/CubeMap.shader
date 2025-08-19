@@ -47,6 +47,21 @@ Shader "CubeMap"
                 return o;
             }
 
+            static const float kRGBMRange = 8.0;
+
+            half4 EncodeRGBM(half3 color)
+            {
+                color *= 1.0 / kRGBMRange;
+                half m = max(max(color.x, color.y), max(color.z, 1e-5));
+                m = ceil(m * 255) / 255;
+                return half4(color / m, m);
+            }
+
+            half3 DecodeRGBM(half4 rgbm)
+            {
+                return rgbm.xyz * rgbm.w * kRGBMRange;
+            }
+
             fixed4 frag (v2f i) : SV_Target
             {
                 // sample the texture
@@ -55,6 +70,7 @@ Shader "CubeMap"
                 // apply fog
                 UNITY_APPLY_FOG(i.fogCoord, col);
                 return col;
+                return half4(DecodeRGBM(col),1.0f);
             }
             ENDCG
         }
